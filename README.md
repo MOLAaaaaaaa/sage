@@ -1,6 +1,6 @@
 # 地质解释Agent系统
 
-基于AI的地质数据分析、速度结构解释和自动化反演平台。
+SAGE (Seismological Agent for Guided Exploration) 是一个旨在将先进的大语言模型（LLM）能力与地震学专业物理知识深度融合的智能体系统。
 
 ## 功能特性
 

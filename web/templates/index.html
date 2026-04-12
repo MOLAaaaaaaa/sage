@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地质解释Agent系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌍 地质解释Agent系统</h1>
+            <p class="subtitle">基于AI的地质数据分析与反演平台</p>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="region-analysis">区域分析</button>
+            <button class="tab-btn" data-tab="velocity-analysis">速度结构</button>
+            <button class="tab-btn" data-tab="rag-literature">文献库</button>
+            <button class="tab-btn" data-tab="code-generation">代码生成</button>
+            <button class="tab-btn" data-tab="inversion">反演计算</button>
+        </nav>
+
+        <!-- 区域分析 -->
+        <div id="region-analysis" class="tab-content active">
+            <h2>区域地质分析</h2>
+            <form id="region-form">
+                <div class="form-group">
+                    <label for="region-name">地区名称:</label>
+                    <input type="text" id="region-name" name="region_name" required
+                           placeholder="例如: 塔里木盆地">
+                </div>
+                <div class="form-group">
+                    <label for="region-description">描述信息:</label>
+                    <textarea id="region-description" name="description" rows="4"
+                              placeholder="输入该地区的地质背景、构造特征等信息..."></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">开始分析</button>
+            </form>
+            <div id="region-result" class="result-panel"></div>
+        </div>
+
+        <!-- 速度结构分析 -->
+        <div id="velocity-analysis" class="tab-content">
+            <h2>速度结构分析</h2>
+            <form id="velocity-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="velocity-image">上传速度结构图 (可选):</label>
+                    <input type="file" id="velocity-image" name="file" accept="image/*">
+                </div>
+                <div class="form-group">
+                    <label for="velocity-description">结构描述:</label>
+                    <textarea id="velocity-description" name="description" rows="4"
+                              placeholder="描述速度结构的特征..."></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="depth-min">最小深度 (km):</label>
+                        <input type="number" id="depth-min" name="depth_min" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="depth-max">最大深度 (km):</label>
+                        <input type="number" id="depth-max" name="depth_max" step="0.1">
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">分析速度结构</button>
+            </form>
+            <div id="velocity-result" class="result-panel"></div>
+        </div>
+
+        <!-- 文献库管理 -->
+        <div id="rag-literature" class="tab-content">
+            <h2>地质文献库 (RAG)</h2>
+
+            <div class="rag-section">
+                <h3>上传PDF文献</h3>
+                <form id="upload-pdf-form" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="pdf-file">选择PDF文件:</label>
+                        <input type="file" id="pdf-file" name="file" accept=".pdf" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="doc-id">文档ID (可选):</label>
+                        <input type="text" id="doc-id" name="doc_id" placeholder="默认使用文件名">
+                    </div>
+                    <button type="submit" class="btn btn-primary">上传并索引</button>
+                </form>
+                <div id="upload-result" class="result-panel"></div>
+            </div>
+
+            <div class="rag-section">
+                <h3>文献检索</h3>
+                <form id="search-form">
+                    <div class="form-group">
+                        <label for="search-query">搜索查询:</label>
+                        <input type="text" id="search-query" name="query"
+                               placeholder="输入地质相关问题..." required>
+                    </div>
+                    <div class="form-group">
+                        <label for="n-results">结果数量:</label>
+                        <input type="number" id="n-results" name="n_results" value="5" min="1" max="20">
+                    </div>
+                    <button type="submit" class="btn btn-primary">搜索</button>
+                </form>
+                <div id="search-result" class="result-panel"></div>
+            </div>
+
+            <div class="rag-section">
+                <h3>文献库统计</h3>
+                <button id="refresh-stats" class="btn btn-secondary">刷新统计</button>
+                <div id="rag-stats" class="stats-panel"></div>
+                <div id="document-list" class="document-list"></div>
+            </div>
+        </div>
+
+        <!-- 代码生成 -->
+        <div id="code-generation" class="tab-content">
+            <h2>算法代码生成</h2>
+            <form id="code-gen-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="algorithm-doc">算法文档 (Markdown):</label>
+                    <input type="file" id="algorithm-doc" name="algorithm_doc"
+                           accept=".md,.markdown" required>
+                </div>
+                <div class="form-group">
+                    <label for="task-desc">任务描述 (可选):</label>
+                    <textarea id="task-desc" name="task_description" rows="3"
+                              placeholder="补充说明具体实现要求..."></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">生成代码</button>
+            </form>
+            <div id="code-result" class="result-panel">
+                <pre id="generated-code"></pre>
+            </div>
+        </div>
+
+        <!-- 反演计算 -->
+        <div id="inversion" class="tab-content">
+            <h2>反演计算</h2>
+            <form id="inversion-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="inv-algorithm">算法文档:</label>
+                    <input type="file" id="inv-algorithm" name="algorithm_doc"
+                           accept=".md,.markdown" required>
+                </div>
+                <div class="form-group">
+                    <label for="inv-data">输入数据文件:</label>
+                    <input type="file" id="inv-data" name="input_data" required>
+                </div>
+                <div class="form-group">
+                    <label for="inv-params">参数 (JSON格式, 可选):</label>
+                    <textarea id="inv-params" name="parameters" rows="3"
+                              placeholder='{"regularization_weight": 0.01}'></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">运行反演</button>
+            </form>
+            <div id="inversion-result" class="result-panel"></div>
+        </div>
+
+        <footer>
+            <p>© 2026 地质解释Agent系统 | Powered by Ollama & Qwen3-VL</p>
+        </footer>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

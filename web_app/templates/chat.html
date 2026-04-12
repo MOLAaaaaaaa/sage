@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SeismicX AI Assistant</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --chat-bg: #f5f7fa;
+            --user-msg-bg: #667eea;
+            --assistant-msg-bg: white;
+        }
+
+        body {
+            background: var(--chat-bg);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .navbar {
+            background: white !important;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+            padding: 20px;
+            height: calc(100vh - 70px);
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message-user {
+            display: flex;
+            justify-content: flex-end;
+        }
+
+        .message-assistant {
+            display: flex;
+            justify-content: flex-start;
+        }
+
+        .message-bubble {
+            max-width: 70%;
+            padding: 12px 18px;
+            border-radius: 18px;
+            position: relative;
+            word-wrap: break-word;
+        }
+
+        .message-user .message-bubble {
+            background: var(--user-msg-bg);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message-assistant .message-bubble {
+            background: var(--assistant-msg-bg);
+            color: #333;
+            border: 1px solid #e0e0e0;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message-time {
+            font-size: 0.75rem;
+            opacity: 0.7;
+            margin-top: 5px;
+        }
+
+        .typing-indicator {
+            display: none;
+            padding: 12px 18px;
+            background: white;
+            border-radius: 18px;
+            border: 1px solid #e0e0e0;
+            max-width: 100px;
+        }
+
+        .typing-indicator.show {
+            display: inline-block;
+        }
+
+        .typing-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #999;
+            margin: 0 2px;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
+        }
+
+        .chat-input-area {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+
+        .quick-actions {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .quick-action-btn {
+            background: var(--primary-gradient);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .quick-action-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .input-group {
+            border-radius: 25px;
+            overflow: hidden;
+            border: 2px solid #e0e0e0;
+        }
+
+        .input-group:focus-within {
+            border-color: #667eea;
+        }
+
+        #userInput {
+            border: none;
+            padding: 15px 20px;
+            font-size: 1rem;
+        }
+
+        #userInput:focus {
+            box-shadow: none;
+        }
+
+        #sendBtn {
+            background: var(--primary-gradient);
+            color: white;
+            border: none;
+            padding: 0 30px;
+            font-size: 1.1rem;
+        }
+
+        #sendBtn:hover {
+            opacity: 0.9;
+        }
+
+        .welcome-message {
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .welcome-message h2 {
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 20px;
+        }
+
+        .feature-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .feature-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover {
+            border-color: #667eea;
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 15px;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Markdown-like styling for assistant messages */
+        .message-assistant .message-bubble strong {
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .message-assistant .message-bubble code {
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .message-assistant .message-bubble ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+
+        .message-assistant .message-bubble li {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-light">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-activity"></i>
+                <strong>SeismicX</strong> AI Assistant
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-house"></i> Home</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/picker"><i class="bi bi-graph-up"></i> Picker</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/associator"><i class="bi bi-diagram-3"></i> Associator</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/polarity"><i class="bi bi-arrows-vertical"></i> Polarity</a></li>
+                    <li class="nav-item"><a class="nav-link active" href="/chat"><i class="bi bi-chat-dots"></i> AI Chat</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/llm-settings"><i class="bi bi-cpu"></i> LLM</a></li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Chat Container -->
+    <div class="chat-container">
+        <!-- Messages Area -->
+        <div class="chat-messages" id="chatMessages">
+            <!-- Welcome Message -->
+            <div class="welcome-message">
+                <h2><i class="bi bi-robot"></i> SeismicX AI Assistant</h2>
+                <p class="lead">您好！我是您的地震数据分析智能助手。</p>
+                <p>我可以通过对话帮您完成震相检测、震相关联、极性分析等任务。</p>
+
+                <div class="feature-cards">
+                    <div class="feature-card">
+                        <div class="feature-icon"><i class="bi bi-folder2-open"></i></div>
+                        <h5>数据浏览</h5>
+                        <p class="text-muted">查看目录中的地震数据文件</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon"><i class="bi bi-graph-up"></i></div>
+                        <h5>波形绘制</h5>
+                        <p class="text-muted">可视化地震波形数据</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon"><i class="bi bi-graph-up"></i></div>
+                        <h5>震相检测</h5>
+                        <p class="text-muted">自动检测Pg/Sg/Pn/Sn震相</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon"><i class="bi bi-diagram-3"></i></div>
+                        <h5>震相关联</h5>
+                        <p class="text-muted">关联震相为地震事件</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon"><i class="bi bi-arrows-vertical"></i></div>
+                        <h5>极性分析</h5>
+                        <p class="text-muted">分析P波初动方向</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Typing Indicator -->
+        <div class="typing-indicator" id="typingIndicator">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+        </div>
+
+        <!-- Input Area -->
+        <div class="chat-input-area">
+            <!-- Quick Actions -->
+            <div class="quick-actions">
+                <button class="quick-action-btn" onclick="sendQuickMessage('帮我查看当前目录下的mseed文件')">
+                    <i class="bi bi-folder2-open"></i> 浏览数据
+                </button>
+                <button class="quick-action-btn" onclick="sendQuickMessage('绘制波形')">
+                    <i class="bi bi-graph-up"></i> 绘制波形
+                </button>
+                <button class="quick-action-btn" onclick="sendQuickMessage('帮我拾取震相')">
+                    <i class="bi bi-play-fill"></i> 拾取震相
+                </button>
+                <button class="quick-action-btn" onclick="sendQuickMessage('关联地震事件')">
+                    <i class="bi bi-link-45deg"></i> 关联事件
+                </button>
+                <button class="quick-action-btn" onclick="sendQuickMessage('分析初动极性')">
+                    <i class="bi bi-arrows-angle-expand"></i> 极性分析
+                </button>
+                <button class="quick-action-btn" onclick="sendQuickMessage('显示帮助')">
+                    <i class="bi bi-question-circle"></i> 帮助
+                </button>
+                <button class="quick-action-btn" onclick="clearChat()">
+                    <i class="bi bi-trash"></i> 清空对话
+                </button>
+            </div>
+
+            <!-- Input -->
+            <div class="input-group">
+                <input type="text" class="form-control" id="userInput"
+                       placeholder="输入消息... (例如: '拾取/data/waveforms目录下的震相')"
+                       onkeypress="handleKeyPress(event)">
+                <button class="btn" type="button" id="sendBtn" onclick="sendMessage()">
+                    <i class="bi bi-send-fill"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const chatMessages = document.getElementById('chatMessages');
+        const userInput = document.getElementById('userInput');
+        const typingIndicator = document.getElementById('typingIndicator');
+
+        // Add message to chat
+        function addMessage(role, content, imageUrl = null) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message message-${role}`;
+
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+
+            // Simple markdown-like formatting
+            let formattedContent = content
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/`(.*?)`/g, '<code>$1</code>')
+                .replace(/\n/g, '<br>');
+
+            bubbleDiv.innerHTML = formattedContent;
+
+            // If there's an image URL, add it
+            if (imageUrl) {
+                const imgDiv = document.createElement('div');
+                imgDiv.style.marginTop = '15px';
+                imgDiv.innerHTML = `
+                    <img src="${imageUrl}" alt="Waveform" 
+                         style="max-width: 100%; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);"
+                         onload="chatMessages.scrollTop = chatMessages.scrollHeight;">
+                    <div style="margin-top: 10px; text-align: center;">
+                        <a href="${imageUrl}" download class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-download"></i> 下载图片
+                        </a>
+                    </div>
+                `;
+                messageDiv.appendChild(bubbleDiv);
+                messageDiv.appendChild(imgDiv);
+            } else {
+                messageDiv.appendChild(bubbleDiv);
+            }
+
+            const timeDiv = document.createElement('div');
+            timeDiv.className = 'message-time';
+            timeDiv.textContent = new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
+
+            messageDiv.appendChild(timeDiv);
+
+            // Remove welcome message if exists
+            const welcomeMsg = chatMessages.querySelector('.welcome-message');
+            if (welcomeMsg) {
+                welcomeMsg.remove();
+            }
+
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // Show/hide typing indicator
+        function showTyping() {
+            typingIndicator.classList.add('show');
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function hideTyping() {
+            typingIndicator.classList.remove('show');
+        }
+
+        // Send message
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message) return;
+
+            // Add user message
+            addMessage('user', message);
+            userInput.value = '';
+
+            // Show typing indicator
+            showTyping();
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({message: message})
+                });
+
+                const data = await response.json();
+                hideTyping();
+
+                // Add assistant response with image if available
+                addMessage('assistant', data.response, data.image_url || null);
+
+                // If there's an action to execute
+                if (data.action === 'execute_command' && data.data && data.data.command) {
+                    // Could add a button to execute command
+                    addMessage('assistant', '💡 提示：您可以在CLI中执行此命令，或者我可以为您执行。需要我执行吗？(是/否)');
+                }
+
+            } catch (error) {
+                hideTyping();
+                addMessage('assistant', '✗ 抱歉，发生了错误。请重试。');
+                console.error('Error:', error);
+            }
+        }
+
+        // Send quick message
+        function sendQuickMessage(message) {
+            userInput.value = message;
+            sendMessage();
+        }
+
+        // Handle Enter key
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        // Clear chat
+        function clearChat() {
+            if (confirm('确定要清空对话历史吗？')) {
+                chatMessages.innerHTML = `
+                    <div class="welcome-message">
+                        <h2><i class="bi bi-robot"></i> SeismicX AI Assistant</h2>
+                        <p class="lead">对话已清空。有什么可以帮您的？</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Focus input on load
+        window.addEventListener('load', () => {
+            userInput.focus();
+        });
+    </script>
+</body>
+</html>

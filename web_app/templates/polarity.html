@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polarity Analyzer - SeismicX</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        body {
+            background: #f5f7fa;
+            padding-top: 80px;
+        }
+        .navbar {
+            background: white !important;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .page-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 0;
+            margin-bottom: 40px;
+        }
+        .form-container {
+            background: white;
+            border-radius: 15px;
+            padding: 40px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        .btn-submit {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 40px;
+            border-radius: 25px;
+            font-size: 1.1rem;
+            transition: all 0.3s ease;
+        }
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        .polarity-indicator {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            line-height: 40px;
+            text-align: center;
+            border-radius: 50%;
+            font-weight: bold;
+            margin: 0 5px;
+        }
+        .polarity-up {
+            background: #28a745;
+            color: white;
+        }
+        .polarity-down {
+            background: #dc3545;
+            color: white;
+        }
+        .polarity-unknown {
+            background: #6c757d;
+            color: white;
+        }
+        .task-status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        .status-queued { background: #fff3cd; border-left: 4px solid #ffc107; }
+        .status-running { background: #d1ecf1; border-left: 4px solid #17a2b8; }
+        .status-completed { background: #d4edda; border-left: 4px solid #28a745; }
+        .status-failed { background: #f8d7da; border-left: 4px solid #dc3545; }
+        .results-table {
+            margin-top: 20px;
+        }
+        .results-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-light fixed-top">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-activity"></i>
+                <strong>SeismicX</strong>
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item"><a class="nav-link" href="/">Home</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/picker">Phase Picker</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/associator">Associator</a></li>
+                    <li class="nav-item"><a class="nav-link active" href="/polarity">Polarity</a></li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Page Header -->
+    <section class="page-header">
+        <div class="container">
+            <h1><i class="bi bi-arrows-vertical"></i> Polarity Analyzer</h1>
+            <p class="lead mb-0">Analyze first-motion polarity of P-waves</p>
+        </div>
+    </section>
+
+    <!-- Main Content -->
+    <div class="container">
+        <div class="row">
+            <!-- Form Section -->
+            <div class="col-lg-8">
+                <div class="form-container">
+                    <h3 class="mb-4">Configure Polarity Analysis</h3>
+                    <form id="polarityForm">
+                        <div class="mb-3">
+                            <label class="form-label">Pick File <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="inputFile" required
+                                   placeholder="/path/to/picks.txt">
+                            <div class="form-text">Phase picking results with Pg phases</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Waveform Directory <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="waveformDir" required
+                                   placeholder="/path/to/waveforms">
+                            <div class="form-text">Directory containing waveform files</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Output File</label>
+                            <input type="text" class="form-control" id="outputFile"
+                                   placeholder="polarity_results.txt (optional)">
+                            <div class="form-text">Leave blank to auto-generate filename</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Polarity Model</label>
+                            <select class="form-select" id="model">
+                                <option value="pnsn/pickers/polar.onnx" selected>Polar ONNX (Recommended)</option>
+                                <option value="pnsn/pickers/polar.jit">Polar JIT</option>
+                            </select>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Min Confidence</label>
+                                <input type="number" class="form-control" id="minConfidence"
+                                       min="0" max="1" step="0.1" value="0.5">
+                                <div class="form-text">Threshold for accepting polarity</div>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Phase Type</label>
+                                <select class="form-select" id="phase">
+                                    <option value="Pg" selected>Pg (Default)</option>
+                                    <option value="Pn">Pn</option>
+                                    <option value="P">P</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="enablePlot">
+                            <label class="form-check-label" for="enablePlot">
+                                Generate Polarity Plots
+                            </label>
+                        </div>
+
+                        <button type="submit" class="btn btn-submit">
+                            <i class="bi bi-play-fill"></i> Start Polarity Analysis
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Status & Info Section -->
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> Task Status</h5>
+                    </div>
+                    <div class="card-body" id="taskStatus">
+                        <p class="text-muted">No tasks submitted yet</p>
+                    </div>
+                </div>
+
+                <div class="card mt-3">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0"><i class="bi bi-lightbulb"></i> About Polarity</h5>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>First-motion polarity</strong> indicates the initial direction of P-wave motion:</p>
+                        <div class="mb-3">
+                            <span class="polarity-indicator polarity-up">U</span>
+                            <strong>Upward (Compression)</strong><br>
+                            <small class="text-muted">Stations in compressional quadrants</small>
+                        </div>
+                        <div class="mb-3">
+                            <span class="polarity-indicator polarity-down">D</span>
+                            <strong>Downward (Dilation)</strong><br>
+                            <small class="text-muted">Stations in dilational quadrants</small>
+                        </div>
+                        <hr>
+                        <p class="mb-0"><strong>Applications:</strong></p>
+                        <ul class="mb-0">
+                            <li>Focal mechanism determination</li>
+                            <li>Earthquake source studies</li>
+                            <li>Stress field analysis</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="row mt-4" id="resultsSection" style="display: none;">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-table"></i> Polarity Results</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped results-table" id="resultsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Station</th>
+                                        <th>Time</th>
+                                        <th>Polarity</th>
+                                        <th>Confidence</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="resultsBody">
+                                </tbody>
+                            </table>
+                        </div>
+                        <div id="summaryStats" class="mt-3">
+                            <!-- Summary statistics will be inserted here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentTaskId = null;
+        let pollInterval = null;
+
+        document.getElementById('polarityForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const data = {
+                input_file: document.getElementById('inputFile').value,
+                waveform_dir: document.getElementById('waveformDir').value,
+                output_file: document.getElementById('outputFile').value || null,
+                model: document.getElementById('model').value,
+                min_confidence: parseFloat(document.getElementById('minConfidence').value),
+                phase: document.getElementById('phase').value,
+                plot: document.getElementById('enablePlot').checked
+            };
+
+            try {
+                const response = await fetch('/api/polarity', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    currentTaskId = result.task_id;
+                    updateTaskStatus(result.task_id);
+                    startPolling(result.task_id);
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                alert('Failed to submit task: ' + error.message);
+            }
+        });
+
+        function updateTaskStatus(taskId) {
+            fetch(`/api/task/${taskId}`)
+                .then(response => response.json())
+                .then(task => {
+                    const statusDiv = document.getElementById('taskStatus');
+                    const statusClass = `status-${task.status}`;
+
+                    statusDiv.innerHTML = `
+                        <div class="task-status ${statusClass}">
+                            <strong>Task ID:</strong> ${task.id}<br>
+                            <strong>Status:</strong> ${task.status.toUpperCase()}<br>
+                            <strong>Type:</strong> ${task.type}<br>
+                            <strong>Created:</strong> ${new Date(task.created_at).toLocaleString()}
+                            ${task.end_time ? `<br><strong>Completed:</strong> ${new Date(task.end_time).toLocaleString()}` : ''}
+                        </div>
+                    `;
+                })
+                .catch(err => console.error('Error:', err));
+        }
+
+        function startPolling(taskId) {
+            if (pollInterval) clearInterval(pollInterval);
+
+            pollInterval = setInterval(() => {
+                updateTaskStatus(taskId);
+
+                fetch(`/api/task/${taskId}`)
+                    .then(response => response.json())
+                    .then(task => {
+                        if (['completed', 'failed', 'error', 'timeout'].includes(task.status)) {
+                            clearInterval(pollInterval);
+
+                            if (task.status === 'completed') {
+                                showResults(task);
+                            }
+                        }
+                    });
+            }, 2000);
+        }
+
+        function showResults(task) {
+            document.getElementById('resultsSection').style.display = 'block';
+
+            // This would normally parse the output file
+            // For now, show a placeholder
+            const summaryDiv = document.getElementById('summaryStats');
+            summaryDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <i class="bi bi-check-circle-fill"></i>
+                    Polarity analysis completed! Check the output file for detailed results.
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>

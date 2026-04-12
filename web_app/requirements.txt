@@ -1,0 +1,19 @@
+# SeismicX Web Interface Dependencies
+
+# Web Framework
+flask==3.0.0
+
+# Scientific Computing
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Seismology
+obspy>=1.4.0
+
+# Deep Learning
+torch>=2.0.0
+onnxruntime>=1.16.0
+
+# Utilities
+tqdm>=4.65.0
+matplotlib>=3.7.0

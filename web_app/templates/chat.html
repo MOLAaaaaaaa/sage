@@ -167,14 +167,6 @@ body { background:var(--bg); height:100vh; display:flex; flex-direction:column; 
         <i class="bi bi-gear"></i> 管理知识库
       </a>
     </div>
-    <div class="sb-section">
-      <div class="sb-title">模式</div>
-      <div class="d-flex flex-column gap-1">
-        <button class="qbtn active" id="modeChat" onclick="setMode('chat')">💬 对话</button>
-        <button class="qbtn" id="modePaper" onclick="setMode('paper')">📖 文献解读</button>
-        <button class="qbtn" id="modeRag" onclick="setMode('rag')">🔍 知识检索</button>
-      </div>
-    </div>
     <!-- Workspace directory -->
     <div class="sb-section">
       <div class="sb-title"><i class="bi bi-folder2-open me-1"></i>本地工作目录</div>
@@ -212,7 +204,7 @@ body { background:var(--bg); height:100vh; display:flex; flex-direction:column; 
             <div class="fw-semibold" style="font-size:.88rem;">上传文献</div>
             <div class="text-muted" style="font-size:.78rem;">解读论文 / RAG 问答</div>
           </div>
-          <div class="feat-card" onclick="setMode('rag');sendQuick('知识库里有哪些内容？')">
+          <div class="feat-card" onclick="sendQuick('知识库里有哪些内容？')">
             <div class="icon"><i class="bi bi-journal-bookmark"></i></div>
             <div class="fw-semibold" style="font-size:.88rem;">知识库查询</div>
             <div class="text-muted" style="font-size:.78rem;">基于已索引文献检索</div>
@@ -273,25 +265,16 @@ body { background:var(--bg); height:100vh; display:flex; flex-direction:column; 
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
 const SESSION_ID = 'sess_' + Math.random().toString(36).slice(2,10);
-let currentMode = 'chat';           // chat | paper | rag
-let sessionDocs = [];               // [{name, n_chunks}]
-let chatHistory = [];               // [{role,content}] for LLM context
-let kbHasDocs   = false;
+let sessionDocs    = [];    // [{name, n_chunks}]
+let chatHistory    = [];    // [{role,content}] for LLM context
+let kbHasDocs      = false;
+let lastCodeStdout = '';    // 上一次 sendCode 的 stdout，供下一轮绘图注入路径
+let lastDataPath   = '';    // 用户消息中提取到的最近一次数据目录/文件路径
 
 const chatMessages    = document.getElementById('chatMessages');
 const typingIndicator = document.getElementById('typingIndicator');
 const contextBar      = document.getElementById('contextBar');
 const contextChips    = document.getElementById('contextChips');
-
-// ── Mode ───────────────────────────────────────────────────────────────────
-function setMode(mode) {
-  currentMode = mode;
-  ['chat','paper','rag'].forEach(m => {
-    document.getElementById('mode' + m.charAt(0).toUpperCase() + m.slice(1))?.classList.remove('active');
-  });
-  const btnId = {chat:'modeChat', paper:'modePaper', rag:'modeRag'}[mode];
-  document.getElementById(btnId)?.classList.add('active');
-}
 
 // ── KB status ──────────────────────────────────────────────────────────────
 async function loadKbStatus() {
@@ -351,9 +334,7 @@ async function uploadFiles(files) {
         refreshSessionSidebar();
         addMsg('assistant',
           `✅ **${file.name}** 已加载（${d.n_pages} 页，${d.n_chunks} 个片段）\n\n` +
-          `现在可以问我关于这篇文献的任何问题，或切换到「📖 文献解读」模式进行深度分析。`);
-        // Auto switch to paper mode
-        setMode('paper');
+          `现在可以直接问我关于这篇文献的任何问题，回答将自动引用文献内容。`);
       } else {
         addMsg('assistant', `✗ 上传失败：${d.error}`);
       }
@@ -374,18 +355,16 @@ function addMsg(role, content, sources=[]) {
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
-  bubble.innerHTML = formatText(content);
+
+  // 将参考文献作为文本追加到回答末尾
+  let fullContent = content;
+  if (sources && sources.length) {
+    fullContent += '\n\n---\n**参考文献**\n' +
+      sources.map((s, i) => `[${i + 1}] ${s}`).join('\n');
+  }
+  bubble.innerHTML = formatText(fullContent);
 
   div.appendChild(bubble);
-
-  // Source badges (for RAG responses)
-  if (sources && sources.length) {
-    const srcDiv = document.createElement('div');
-    srcDiv.style.cssText = 'margin-top:.3rem;';
-    srcDiv.innerHTML = '<span style="font-size:.72rem;color:#aaa;margin-right:.3rem">来源：</span>' +
-      sources.map(s => `<span class="source-badge">${s}</span>`).join('');
-    div.appendChild(srcDiv);
-  }
 
   const timeEl = document.createElement('div');
   timeEl.className = 'msg-time';
@@ -494,6 +473,27 @@ function showTyping() {
 }
 function hideTyping() { typingIndicator.classList.remove('show'); }
 
+// ── LLM 路由判断 ───────────────────────────────────────────────────────────
+async function classifyIntent(text) {
+  // 快速路径：明确的绝对路径操作（如 /data/... 或 ~/...），不是问句
+  if (/(?:^|\s)[/~][\w./\-]{4,}/.test(text) && !text.trim().endsWith('?')) {
+    return 'code';
+  }
+  try {
+    const r = await fetch('/api/chat/route', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: text, kb_has_docs: kbHasDocs || sessionDocs.length > 0}),
+    });
+    const d = await r.json();
+    return d.intent || 'qa';
+  } catch (e) {
+    // 网络失败时降级到简单正则
+    if (/(绘制|画图|滤波|频谱|读取|执行|运行|waveform|\.sac|\.mseed)/i.test(text)) return 'code';
+    return 'qa';
+  }
+}
+
 // ── Send message ───────────────────────────────────────────────────────────
 async function sendMessage() {
   const input = document.getElementById('userInput');
@@ -507,17 +507,15 @@ async function sendMessage() {
   showTyping();
 
   try {
-    // Decide routing:
-    // - paper / rag mode → /api/chat/rag
-    // - chat mode with session docs → /api/chat/rag (with paper context)
-    // - chat mode, no docs, no kb → /api/chat (conversational agent)
-    const hasSessionDocs = sessionDocs.length > 0;
-    const useRag = (currentMode !== 'chat') || hasSessionDocs || kbHasDocs;
+    // 用 LLM 判断意图（code / qa / chat）
+    const intent = await classifyIntent(text);
 
-    if (useRag) {
-      await sendRag(text);
+    if (intent === 'code') {
+      await sendCode(text);                              // 生成并执行技能代码
+    } else if (intent === 'qa' || sessionDocs.length > 0 || kbHasDocs) {
+      await sendRag(text);                               // 知识问答 + RAG 检索
     } else {
-      await sendNormal(text);
+      await sendNormal(text);                            // 普通对话
     }
   } catch(e) {
     hideTyping();
@@ -525,8 +523,168 @@ async function sendMessage() {
   }
 }
 
+// ── CodeEngine 技能执行 ────────────────────────────────────────────────────
+async function sendCode(text) {
+  // ── 从当前消息或历史中提取数据路径 ────────────────────────────────────
+  // 1. 从用户当前消息提取路径（如 "看下目录/data/seismic/waveform"）
+  const pathInMsg = text.match(/([~\/][\w.\-/]{4,})/);
+  if (pathInMsg) lastDataPath = pathInMsg[1];
+
+  // ── 对绘图请求注入数据目录上下文 ───────────────────────────────────────
+  let enrichedText = text;
+  const isPlotReq = /(绘制|画图|画波形|绘图|可视化|plot)/i.test(text);
+  if (isPlotReq && lastDataPath) {
+    enrichedText += `\n（数据目录：${lastDataPath}，请直接用 read_stream_from_dir 读取并绘图，不要列目录，不要使用临时目录）`;
+  }
+
+  const r = await fetch('/api/chat/code', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({message: enrichedText, session_id: SESSION_ID}),
+  });
+  const d = await r.json();
+  hideTyping();
+
+  if (!d.ok) {
+    addMsg('assistant', `✗ 技能调用出错：${d.error}`);
+    return;
+  }
+
+  // ── 直接构建 DOM，完全避免 markdown 解析问题 ──────────────────────────
+  const welcome = document.getElementById('welcomePanel');
+  if (welcome) welcome.remove();
+
+  const msgDiv = document.createElement('div');
+  msgDiv.className = 'msg msg-assistant';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.style.maxWidth = '82%';
+
+  // 1. 技能标签
+  if (d.skill_used) {
+    const tag = document.createElement('div');
+    tag.style.cssText = 'font-size:.78rem;color:#3949ab;font-weight:600;margin-bottom:.5rem;';
+    tag.innerHTML = `🔧 技能：<code style="background:#e8eaf6;padding:1px 6px;border-radius:4px;font-size:.85em">${d.skill_used}</code>`;
+    bubble.appendChild(tag);
+  }
+
+  // 2. 执行状态
+  const status = document.createElement('div');
+  status.style.cssText = 'font-weight:600;margin-bottom:.4rem;color:' + (d.success ? '#2e7d32' : '#c62828') + ';';
+  status.textContent = d.success ? '✅ 代码执行成功' : '❌ 执行失败';
+  bubble.appendChild(status);
+
+  // 3. 标准输出（只显示一次，去掉 [FIGURE] 行）
+  const cleanOut = (d.stdout || '')
+    .split('\n').filter(l => !l.startsWith('[FIGURE]')).join('\n').trim();
+  if (cleanOut) {
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'background:#f6f8fa;border:1px solid #e0e0e0;border-radius:8px;padding:.6rem .8rem;overflow-x:auto;font-size:.82em;margin:.3rem 0;white-space:pre-wrap;word-break:break-all;';
+    pre.textContent = cleanOut;
+    bubble.appendChild(pre);
+  } else if (d.success && lastDataPath && !d.figures.length) {
+    // stdout 为空且无图时，至少显示访问了哪个目录
+    const pathNote = document.createElement('div');
+    pathNote.style.cssText = 'font-size:.8rem;color:#666;margin-top:.25rem;word-break:break-all;';
+    pathNote.textContent = `📁 ${lastDataPath}`;
+    bubble.appendChild(pathNote);
+  }
+
+  // 4. 失败时展示代码
+  if (!d.success && d.code) {
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:.78rem;color:#888;margin-top:.5rem;margin-bottom:.2rem;';
+    label.textContent = '生成的代码：';
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'background:#fff8f8;border:1px solid #fcc;border-radius:8px;padding:.6rem .8rem;overflow-x:auto;font-size:.82em;margin:0;white-space:pre-wrap;';
+    pre.textContent = d.code;
+    bubble.appendChild(label);
+    bubble.appendChild(pre);
+  }
+
+  // 5. 图像（内嵌 base64，直接在气泡里显示）+ 下载按钮
+  if (d.figures && d.figures.length) {
+    d.figures.forEach(fig => {
+      // 图像容器
+      const figWrap = document.createElement('div');
+      figWrap.style.cssText = 'margin-top:.75rem;';
+
+      // 图像本体
+      const imgSrc = `data:image/png;base64,${fig.data}`;
+      const img = document.createElement('img');
+      img.src = imgSrc;
+      img.alt = fig.name;
+      img.style.cssText = 'max-width:100%;border-radius:8px 8px 0 0;border:1px solid #e0e0e0;border-bottom:none;display:block;cursor:zoom-in;';
+      img.title = '点击放大';
+      img.onclick = () => {
+        const win = window.open();
+        win.document.write(`<!DOCTYPE html><html><body style="margin:0;background:#111">
+          <img src="${imgSrc}" style="max-width:100%;display:block;margin:auto">
+          </body></html>`);
+      };
+      figWrap.appendChild(img);
+
+      // 下载工具栏
+      const toolbar = document.createElement('div');
+      toolbar.style.cssText = 'display:flex;gap:.4rem;padding:.4rem .6rem;background:#f6f8fa;border:1px solid #e0e0e0;border-radius:0 0 8px 8px;flex-wrap:wrap;align-items:center;';
+
+      // 文件名标签
+      const fnLabel = document.createElement('span');
+      fnLabel.style.cssText = 'font-size:.75rem;color:#888;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      fnLabel.textContent = fig.name;
+      toolbar.appendChild(fnLabel);
+
+      // 下载图像按钮
+      const dlImg = document.createElement('a');
+      dlImg.href = imgSrc;
+      dlImg.download = fig.name;
+      dlImg.style.cssText = 'font-size:.75rem;padding:.18rem .55rem;border-radius:4px;background:#e8f4fd;color:#1565c0;border:1px solid #bbdefb;text-decoration:none;white-space:nowrap;cursor:pointer;';
+      dlImg.textContent = '⬇ 图像';
+      toolbar.appendChild(dlImg);
+
+      // GMT 脚本下载按钮（仅 GMT 图有）
+      if (fig.gmt_script) {
+        const scriptBlob = new Blob([fig.gmt_script.content], {type: 'text/plain'});
+        const scriptUrl  = URL.createObjectURL(scriptBlob);
+        const dlScript   = document.createElement('a');
+        dlScript.href     = scriptUrl;
+        dlScript.download = fig.gmt_script.name;
+        dlScript.style.cssText = 'font-size:.75rem;padding:.18rem .55rem;border-radius:4px;background:#e8f5e9;color:#2e7d32;border:1px solid #c8e6c9;text-decoration:none;white-space:nowrap;cursor:pointer;';
+        dlScript.textContent = '⬇ GMT脚本';
+        toolbar.appendChild(dlScript);
+      }
+
+      figWrap.appendChild(toolbar);
+      bubble.appendChild(figWrap);
+    });
+  }
+
+  const timeEl = document.createElement('div');
+  timeEl.className = 'msg-time';
+  timeEl.textContent = new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+
+  msgDiv.appendChild(bubble);
+  msgDiv.appendChild(timeEl);
+  chatMessages.appendChild(msgDiv);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+
+  // 保存 stdout 供下一轮绘图注入路径
+  if (d.stdout) lastCodeStdout = d.stdout;
+
+  // 记录到 chatHistory（简洁摘要，供后续 RAG 上下文使用）
+  const summary = (d.skill_used ? `[技能:${d.skill_used}] ` : '') +
+    (d.success ? '执行成功' : '执行失败') +
+    (cleanOut ? '\n输出:\n' + cleanOut.slice(0, 300) : '');
+  chatHistory.push({role:'assistant', content: summary});
+}
+
 async function sendRag(text) {
-  const mode = currentMode === 'chat' ? 'rag' : currentMode === 'paper' ? 'paper_read' : 'rag';
+  // 自动判断是否为文献解读请求
+  const paperKeywords = ['总结', '解读', '摘要', '结论', '方法', '论文', '文献', '这篇', '本文', '作者'];
+  const isPaperMode = paperKeywords.some(k => text.includes(k)) && sessionDocs.length > 0;
+  const mode = isPaperMode ? 'paper_read' : 'rag';
+
   const r = await fetch('/api/chat/rag', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
@@ -541,18 +699,10 @@ async function sendRag(text) {
   const d = await r.json();
   hideTyping();
 
-  const answer = d.response || '（无回复）';
-  const sources = d.sources || [];
-  const msgEl = addMsg('assistant', answer, sources);
+  const answer  = d.response || '（无回复）';
+  const sources = d.sources  || [];
+  addMsg('assistant', answer, sources);
   chatHistory.push({role:'assistant', content:answer});
-
-  // Update context bar
-  if (sources.length) {
-    contextBar.style.display = 'flex';
-    contextChips.innerHTML = sources.map(s =>
-      `<span class="ctx-chip"><i class="bi bi-file-earmark-text"></i> ${s}</span>`
-    ).join('');
-  }
 }
 
 async function sendNormal(text) {
@@ -604,6 +754,14 @@ function clearChat() {
     <p class="text-muted">对话已清空，有什么可以帮您？</p>
   </div>`;
   contextBar.style.display = 'none';
+  lastCodeStdout = '';   // 清空路径缓存
+  lastDataPath   = '';   // 清空数据目录缓存
+  // 同步重置 CodeEngine 历史，避免旧路径/变量污染新对话
+  fetch('/api/chat/code/reset', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({session_id: SESSION_ID}),
+  }).catch(() => {});
 }
 
 // ── Waveform (keep existing Plotly logic) ──────────────────────────────────

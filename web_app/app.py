@@ -929,6 +929,239 @@ def knowledge_clear():
         return jsonify({"ok": False, "error": str(e)})
 
 
+# session_id → CodeEngine 实例（保留多轮对话历史，支持"上述波形"等跨轮引用）
+_code_engines: dict = {}
+
+
+def _get_code_engine(session_id: str, llm_cfg: dict):
+    """获取或创建 session 级别的 CodeEngine，并更新 LLM 配置。"""
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).parent.parent))
+    from seismo_code.code_engine import CodeEngine
+
+    if session_id not in _code_engines:
+        _code_engines[session_id] = CodeEngine(
+            llm_cfg, project_root=str(Path(__file__).parent.parent)
+        )
+    else:
+        # 更新 LLM 配置（用户可能在设置页面改过）
+        _code_engines[session_id].llm_config = llm_cfg
+    return _code_engines[session_id]
+
+
+@app.route('/api/chat/code', methods=['POST'])
+def chat_code():
+    """
+    调用 session 级别的 CodeEngine 执行地震学技能代码。
+    同一 session 内的对话历史（文件路径、变量等）会被保留，
+    支持"绘制上述波形"等跨轮引用。
+
+    请求体：
+      { "message": "...", "session_id": "sess_abc123" }
+    """
+    import base64 as _b64
+
+    data      = request.json or {}
+    user_msg  = (data.get('message') or '').strip()
+    session_id = data.get('session_id', 'default')
+    if not user_msg:
+        return jsonify({'ok': False, 'error': '消息不能为空'}), 400
+
+    llm_cfg = _get_llm_config()
+    if not llm_cfg.get('api_base'):
+        return jsonify({
+            'ok': True, 'success': False,
+            'response': '未配置 LLM 后端，请在 LLM 设置页面完成配置。',
+            'code': '', 'stdout': '', 'figures': [], 'skill_used': None,
+        })
+
+    try:
+        from seismo_skill import search_skills, invalidate_cache
+        invalidate_cache()  # 确保 keyword 更改立即生效
+
+        # 查找最相关技能（仅用于界面展示）
+        try:
+            hits = search_skills(user_msg, top_k=1)
+            skill_used = hits[0]['name'] if hits else None
+        except Exception:
+            skill_used = None
+
+        # 获取 session 级别 Engine（保留历史）
+        engine = _get_code_engine(session_id, llm_cfg)
+        result = engine.run(user_msg, timeout=120)
+
+        # 图像 base64 编码，同时关联 GMT 脚本
+        # 先从 stdout 中提取 [GMT_SCRIPT] 标记
+        gmt_script_map: dict = {}   # basename_no_ext → {name, content}
+        for line in (result.stdout or '').splitlines():
+            if line.startswith('[GMT_SCRIPT] '):
+                sp = line[len('[GMT_SCRIPT] '):].strip()
+                if os.path.isfile(sp):
+                    try:
+                        with open(sp, encoding='utf-8') as sf:
+                            base = Path(sp).stem   # e.g. "gmt_output"
+                            gmt_script_map[base] = {
+                                'name': Path(sp).name,
+                                'content': sf.read(),
+                            }
+                    except Exception:
+                        pass
+
+        figures = []
+        for fig_path in result.figures:
+            try:
+                with open(fig_path, 'rb') as f:
+                    fig_base = Path(fig_path).stem
+                    entry = {
+                        'name': Path(fig_path).name,
+                        'data': _b64.b64encode(f.read()).decode('utf-8'),
+                    }
+                    # 附加对应的 GMT 脚本（如果有）
+                    if fig_base in gmt_script_map:
+                        entry['gmt_script'] = gmt_script_map[fig_base]
+                    figures.append(entry)
+            except Exception:
+                pass
+
+        return jsonify({
+            'ok':        True,
+            'success':   result.success,
+            'response':  result.response,
+            'code':      result.code,
+            'stdout':    result.stdout,
+            'figures':   figures,
+            'skill_used': skill_used,
+        })
+
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/api/chat/code/reset', methods=['POST'])
+def chat_code_reset():
+    """清除指定 session 的 CodeEngine 历史（对话清空时调用）。"""
+    session_id = (request.json or {}).get('session_id', 'default')
+    if session_id in _code_engines:
+        _code_engines[session_id].reset()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/chat/route', methods=['POST'])
+def chat_route():
+    """
+    用 LLM 判断用户意图，返回路由类型：
+      code  — 需要执行代码/技能（数据处理、绘图、读取文件）
+      qa    — 知识问答（概念解释、文献查询、"what is X"）
+      chat  — 普通对话
+    失败时回退到 'qa'（保证不会静默丢失）。
+    """
+    data       = request.json or {}
+    message    = data.get('message', '').strip()
+    kb_has_docs = data.get('kb_has_docs', False)   # 知识库是否有文档
+
+    if not message:
+        return jsonify({'ok': True, 'intent': 'chat'})
+
+    llm_cfg = _get_llm_config()
+
+    # 快速路径：消息以绝对路径或 ~ 开头，且不是问句 → 直接判 code
+    import re as _re
+    if _re.search(r'(?:^|\s)[/~][\w./\-]{4,}', message) and not message.strip().endswith('?'):
+        return jsonify({'ok': True, 'intent': 'code'})
+
+    # 构建轻量路由提示（低 max_tokens，快速响应）
+    kb_hint = "（知识库中有相关文献可供检索）" if kb_has_docs else "（知识库为空）"
+    routing_prompt = f"""你是一个路由分类器，判断用户消息属于哪种操作类型。
+只返回以下单词之一，不要输出任何其他内容：
+  code  — 需要执行 Python 代码 / 调用地震数据处理技能（绘图、滤波、读文件、计算震源参数等）
+  qa    — 知识问答、概念解释、文献查询（"what is X"、"explain"、"什么是"、"如何理解"等）
+  chat  — 打招呼、闲聊、与地震学无关的普通对话
+
+知识库状态：{kb_hint}
+用户消息：{message}
+
+分类结果（只返回一个词）："""
+
+    try:
+        result = _llm_call(
+            [{"role": "user", "content": routing_prompt}],
+            llm_cfg,
+            max_tokens=10,   # 只需一个词
+        ).lower().strip()
+
+        # 提取第一个有效词
+        for word in ['code', 'qa', 'chat']:
+            if word in result:
+                return jsonify({'ok': True, 'intent': word})
+
+        # 未识别 → 默认 qa
+        return jsonify({'ok': True, 'intent': 'qa'})
+
+    except Exception as e:
+        # LLM 不可用时的回退规则
+        fallback = 'code' if _re.search(
+            r'(绘制|画图|滤波|频谱|读取|执行|运行|plot|filter|spectrum|waveform|sac|mseed)',
+            message, _re.I
+        ) else 'qa'
+        return jsonify({'ok': True, 'intent': fallback, 'fallback': True})
+
+
+@app.route('/api/knowledge/retrieve', methods=['POST'])
+def knowledge_retrieve():
+    """
+    直接检索知识库中高度相关的文献段落。
+
+    请求体（JSON）：
+      {
+        "query":           "检索查询文本",
+        "top_k":           8,      // 可选，默认 8
+        "score_threshold": 0.5     // 可选，默认 0.5（高相关）
+      }
+
+    返回：
+      {
+        "ok": true,
+        "query": "...",
+        "n_results": 3,
+        "results": [
+          {
+            "doc_name":  "paper.pdf",
+            "page":      5,
+            "score":     0.72,
+            "text":      "...",
+            "chunk_id":  "abc123_4_0",
+            "doc_id":    "abc123"
+          },
+          ...
+        ]
+      }
+    """
+    data  = request.json or {}
+    query = (data.get("query") or "").strip()
+    if not query:
+        return jsonify({"ok": False, "error": "query 不能为空"}), 400
+
+    top_k     = int(data.get("top_k", 8))
+    threshold = float(data.get("score_threshold", 0.5))
+
+    try:
+        from rag_engine import get_knowledge_base
+        kb = get_knowledge_base()
+        if kb.is_empty:
+            return jsonify({"ok": True, "query": query, "n_results": 0, "results": [],
+                            "message": "知识库为空，请先上传文献 PDF"})
+
+        results = kb.retrieve_relevant_docs(query, top_k=top_k, score_threshold=threshold)
+        return jsonify({
+            "ok":       True,
+            "query":    query,
+            "n_results": len(results),
+            "results":  results,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 # ── 聊天界面临时文档上传 ────────────────────────────────────────────────────
 
 @app.route('/api/chat/upload', methods=['POST'])
@@ -1046,17 +1279,29 @@ def chat_rag():
         if session.get("doc_names"):
             sources.extend(session["doc_names"])
 
-    # 2. 持久知识库（BGE-M3 向量检索）
+    # 2. 持久知识库（BGE-M3 向量检索 / TF-IDF 回退）
     try:
         from rag_engine import get_knowledge_base
         kb = get_knowledge_base()
         if not kb.is_empty:
-            kb_ctx = kb.build_rag_context(user_msg, top_k=4, max_chars=2000)
-            if kb_ctx:
-                context_parts.append(kb_ctx)
-                for d in kb.list_docs():
-                    if d.doc_name not in sources:
-                        sources.append(d.doc_name)
+            # 直接用 retrieve() 拿到 (chunk, score) 列表，精确追踪来源
+            kb_hits = kb.retrieve(user_msg, top_k=5, score_threshold=0.05)
+            if kb_hits:
+                lines = ["以下是从知识库中检索到的相关内容，请参考这些内容回答用户问题：\n"]
+                total = 0
+                for chunk, score in kb_hits:
+                    entry = (
+                        f"【来源：{chunk.doc_name}，第 {chunk.page + 1} 页，"
+                        f"相关度 {score:.2f}】\n{chunk.text}\n"
+                    )
+                    if total + len(entry) > 2000:
+                        break
+                    lines.append(entry)
+                    total += len(entry)
+                    # 只把真正命中的文档列为参考文献
+                    if chunk.doc_name not in sources:
+                        sources.append(chunk.doc_name)
+                context_parts.append("\n".join(lines))
     except Exception:
         pass
 

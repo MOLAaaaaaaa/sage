@@ -44,7 +44,12 @@ except Exception:
 # ---------------------------------------------------------------------------
 
 _TOOLKIT_SUMMARY = """
-## 内置地震学工具包（直接调用，无需 import）
+## 内置地震学工具包（直接调用，无需 import，禁止 from obspy import 这些函数）
+
+> 以下函数已通过 `from seismo_code.toolkit import *` 预注入，直接写函数名调用即可。
+> ❌ 错误: `from obspy import read_stream_from_dir`（这些不是 obspy 的函数！）
+> ✅ 正确: `st = read_stream_from_dir("/path/")` 直接调用
+> ✅ 原生obspy: `from obspy import read; st = read("file.sac")`（这个是合法的）
 
 ### 数据读取
 - `read_stream(path)` → obspy.Stream  读取 mseed/sac 等波形文件或目录
@@ -88,6 +93,12 @@ _TOOLKIT_SUMMARY = """
 - `stream_info(st)` → str  打印台网/通道/采样率/时间范围
 - `picks_to_dict(picks_file)` → list of dict  读取 SAGE 拾取文件
 
+### GMT 地图绘制
+- `run_gmt(script, outname='gmt_map', title='GMT Map')` → str(PNG路径)
+  执行 GMT6 bash 脚本，自动保存图像（PNG）和脚本（.sh）
+  脚本内使用 `gmt begin <name> PNG` ... `gmt end` 语法
+  需要系统安装 GMT >= 6.0
+
 ### 图像保存
 - 所有 plot_* 函数会自动将图像保存到当前运行目录并打印路径
 - 手动保存: `savefig('filename.png')`（已在环境中注入）
@@ -96,14 +107,76 @@ _TOOLKIT_SUMMARY = """
 _SYSTEM_PROMPT = """你是一位地震学数据处理专家和 Python 程序员。
 用户会用自然语言描述地震学数据处理、分析和可视化需求，你的任务是生成可直接执行的 Python 代码。
 
+## ⚠️ 最重要的规则：工具包函数使用方式
+
+执行环境已通过 `from seismo_code.toolkit import *` 预注入以下函数，**直接调用即可，绝对不要 import**：
+  read_stream, read_stream_from_dir, detrend_stream, taper_stream, filter_stream,
+  plot_stream, plot_spectrogram, plot_psd, plot_particle_motion, stream_info, picks_to_dict,
+  taup_arrivals, p_travel_time, s_travel_time, compute_spectrum, compute_hvsr,
+  estimate_magnitude_ml, estimate_corner_freq, estimate_seismic_moment, savefig,
+  run_gmt
+
+**❌ 严禁写法（会导致 ImportError）：**
+  from obspy import read_stream_from_dir   # read_stream_from_dir 不是 obspy 的函数！
+  from seismo_code.toolkit import ...      # 已预注入，无需再 import
+
+**✅ 正确写法（直接调用）：**
+  st = read_stream_from_dir("/path/to/data/")
+  plot_stream(st, title="波形图")
+
+**✅ 若需要使用原生 obspy：**
+  from obspy import read                   # obspy.read 是合法的
+  st = read("/path/to/file.sac")           # 读取单个文件
+  tr = st[0]
+  # 绘图需手动保存（不能用 plt.show()）：
+  import matplotlib.pyplot as plt
+  fig, ax = plt.subplots()
+  ax.plot(tr.times(), tr.data)
+  savefig("waveform.png")                  # savefig 已预注入，自动保存并上报
+
 ## 规则
 1. 只输出 Python 代码块（```python ... ```），不要输出任何解释
 2. 代码必须能独立执行，不要假设有全局变量（除非之前对话中已明确定义）
 3. 如果需要读取文件，使用用户提供的路径或对话历史中的路径
 4. 优先使用内置工具包（无需 import），也可以使用 obspy / numpy / scipy / matplotlib
-5. 生成的图像使用 plot_* 函数或 savefig() 保存，不要调用 plt.show()
+5. 生成的图像**必须**使用 plot_* 函数（不传 outfile 参数，系统自动保存）或 savefig('name.png')，**绝对不要调用 plt.show()**
 6. 有错误时打印友好的中文提示，用 try/except 保护关键步骤
 7. 数值结果用 print() 输出，格式清晰
+8. 【绘图请求】当用户要求绘制/画图/可视化波形时，必须：① 用 read_stream/read_stream_from_dir 读取数据；② 调用 plot_stream(st, title) 生成图像；③ 绝对不要只列文件列表
+9. 【跨轮引用】如对话历史中已有文件路径，直接使用那些路径，不必重新列目录
+10. 【目录问题】用户的数据目录是用户提供的路径，不要使用临时执行目录（/tmp/sage_exec_xxx）作为数据源
+11. 【目录查看】当用户要求"看目录/列文件/查看文件"时，必须用 print() 输出：① 目录的完整路径；② 每个文件的完整路径（用 os.path.join）；③ 文件总数。示例：
+    import os
+    d = '/path/to/data'
+    files = [f for f in os.listdir(d) if not f.startswith('.')]
+    print("目录：" + d + "，共 " + str(len(files)) + " 个文件")
+    for f in sorted(files): print(os.path.join(d, f))
+
+## 技能串联（核心能力）
+
+**一段代码可以同时完成多个步骤**，不要把每个功能拆成孤立调用。典型串联模式：
+
+```
+读取数据 → 预处理 → 分析/计算 → 可视化 → 输出数值结论
+```
+
+示例（完整串联）：
+```python
+st = read_stream_from_dir("/data/event/")
+print("加载完成：")
+stream_info(st)                                    # 打印台站信息
+st = detrend_stream(st)
+st = filter_stream(st, "bandpass", freqmin=1.0, freqmax=10.0)
+plot_stream(st, title="滤波后波形（1-10 Hz）")     # 绘制波形
+tr_z = st.select(channel="*Z")[0]
+plot_spectrogram(tr_z)                             # 绘制时频图
+freqs, psd, _ = plot_psd(tr_z)                     # 绘制 PSD
+peak_f = freqs[psd.argmax()]
+print("主频：" + str(round(float(peak_f), 2)) + " Hz")
+```
+
+每次回答时，**主动判断用户意图，把相关步骤合并到一段代码**，而不是等用户逐步追问。
+例如：用户说"分析一下波形"→ 应同时完成：读取 + stream_info + 波形图 + 频谱图。
 
 ## 可用库（已安装）
 - obspy（地震数据读取、处理、仪器响应去除）
@@ -268,8 +341,8 @@ class CodeEngine:
         msg_content = user_request
         if data_hint:
             msg_content += f"\n\n数据路径: {data_hint}"
-        if self._last_exec_dir:
-            msg_content += f"\n（上一次运行目录: {self._last_exec_dir}）"
+        # NOTE: 不注入 _last_exec_dir — 那是临时执行目录，注入后会导致 LLM 把它当数据源
+        # 对话历史中已包含用户提供的数据路径，LLM 可直接引用（见规则9）
 
         self._history.append({"role": "user", "content": msg_content})
 

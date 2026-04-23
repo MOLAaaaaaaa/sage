@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import time
+from datetime import datetime
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -149,7 +150,7 @@ class EmbeddingModel:
             )
             self._backend = "flag"
             return
-        except ImportError:
+        except Exception:
             pass
 
         # 回退到 sentence-transformers
@@ -161,13 +162,15 @@ class EmbeddingModel:
             )
             self._backend = "st"
             return
-        except ImportError:
+        except Exception:
             pass
 
         raise RuntimeError(
             "未找到嵌入模型库，请安装其中一个：\n"
             "  pip install FlagEmbedding\n"
-            "  或 pip install sentence-transformers"
+            "  或 pip install sentence-transformers\n\n"
+            "如果已安装但仍报错，可能是因为版本兼容性问题。\n"
+            "请尝试：pip install --upgrade FlagEmbedding sentence-transformers"
         )
 
     def encode(self, texts: List[str], batch_size: int = 32) -> "np.ndarray":
@@ -283,15 +286,34 @@ class KnowledgeBase:
                     self._docs[did] = DocMeta(**d)
                 for cid, c in raw.get("chunks", {}).items():
                     self._chunks[cid] = DocChunk(**c)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Error loading metadata: {e}")
 
         idmap = self._idmap_path()
         if INDEX_FILE.exists() and os.path.exists(idmap):
             try:
                 self._faiss = FaissIndex.load(str(INDEX_FILE), idmap)
-            except Exception:
+            except Exception as e:
+                print(f"Error loading FAISS index: {e}")
                 self._faiss = None
+
+        # 启动时清理：移除 PDF 文件已不存在的孤立文档记录
+        self._cleanup_stale_docs()
+
+    def _cleanup_stale_docs(self):
+        """删除物理 PDF 已不存在的文档及其 chunk/向量，保持向量库与文件一致。"""
+        stale = [did for did, m in self._docs.items()
+                 if m.file_path and not Path(m.file_path).exists()]
+        if not stale:
+            return
+        for did in stale:
+            self._docs.pop(did, None)
+            to_rm = [cid for cid, c in self._chunks.items() if c.doc_id == did]
+            for cid in to_rm:
+                del self._chunks[cid]
+            print(f"[RAG] 清理孤立文档: {did}")
+        self._rebuild_index()
+        self._save_state()
 
     def _save_state(self):
         meta = {
@@ -356,20 +378,55 @@ class KnowledgeBase:
 
         # 编码
         _log("🔢 BGE-M3 向量化中…")
-        model = EmbeddingModel.get()
-        texts  = [c.text for c in all_chunks]
-        vecs   = model.encode(texts)
-        _log(f"   向量维度: {vecs.shape}")
+        try:
+            model = EmbeddingModel.get()
+            texts  = [c.text for c in all_chunks]
+            vecs   = model.encode(texts)
+            _log(f"   向量维度: {vecs.shape}")
 
-        # 加入 FAISS
-        if self._faiss is None:
-            self._faiss = FaissIndex(dim=vecs.shape[1])
-        chunk_ids = [c.chunk_id for c in all_chunks]
-        self._faiss.add(vecs, chunk_ids)
+            # 加入 FAISS
+            if self._faiss is None:
+                self._faiss = FaissIndex(dim=vecs.shape[1])
+            chunk_ids = [c.chunk_id for c in all_chunks]
+            self._faiss.add(vecs, chunk_ids)
 
-        # 注册 chunk
-        for chunk in all_chunks:
-            self._chunks[chunk.chunk_id] = chunk
+            # 注册 chunk
+            for chunk in all_chunks:
+                self._chunks[chunk.chunk_id] = chunk
+        except RuntimeError as e:
+            _log(f"⚠ 嵌入模型加载失败: {e}")
+            _log("⚠ 正在使用简化版RAG实现...")
+            
+            # 使用简化版实现
+            from web_app.simple_rag import get_simple_rag
+            simple_rag = get_simple_rag()
+            
+            # 添加文档到简化版RAG
+            doc_metadata = {
+                "doc_id": doc_id,
+                "doc_name": doc_name,
+                "file_path": "",  # 简化版不需要存储文件
+                "n_pages": n_pages,
+                "n_chunks": len(all_chunks),
+                "added_at": datetime.now().isoformat(timespec="seconds"),
+                "size_bytes": Path(pdf_path).stat().st_size,
+            }
+            simple_rag.add_document(all_chunks, doc_metadata)
+            
+            _log(f"✅ 已使用简化版RAG添加文档：{doc_name}（{len(all_chunks)} chunks）")
+            meta = DocMeta(
+                doc_id=doc_id,
+                doc_name=doc_name,
+                file_path="",  # 简化版不需要存储文件
+                n_pages=n_pages,
+                n_chunks=len(all_chunks),
+                added_at=datetime.now().isoformat(timespec="seconds"),
+                size_bytes=Path(pdf_path).stat().st_size,
+            )
+            self._docs[doc_id] = meta
+            # 确保元数据持久化
+            self._save_state()
+            return meta
 
         # 复制 PDF 到知识库目录
         dest = DOCS_DIR / f"{doc_id}_{doc_name}"
@@ -395,25 +452,38 @@ class KnowledgeBase:
         删除文档及其所有 chunk。
         注意：FAISS IndexFlatIP 不支持按 ID 删除，需要重建索引。
         """
-        if doc_id not in self._docs:
-            return False
+        if doc_id in self._docs:
+            # 标准FAISS实现
+            meta = self._docs.pop(doc_id)
+            # 移除 chunk
+            to_remove = [cid for cid, c in self._chunks.items() if c.doc_id == doc_id]
+            for cid in to_remove:
+                del self._chunks[cid]
 
-        meta = self._docs.pop(doc_id)
-        # 移除 chunk
-        to_remove = [cid for cid, c in self._chunks.items() if c.doc_id == doc_id]
-        for cid in to_remove:
-            del self._chunks[cid]
+            # 删除文件副本
+            try:
+                Path(meta.file_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
-        # 删除文件副本
-        try:
-            Path(meta.file_path).unlink(missing_ok=True)
-        except Exception:
-            pass
-
-        # 重建 FAISS 索引（只保留剩余 chunk 的向量）
-        self._rebuild_index()
-        self._save_state()
-        return True
+            # 重建 FAISS 索引（只保留剩余 chunk 的向量）
+            self._rebuild_index()
+            self._save_state()
+            return True
+        else:
+            # 检查简化版RAG系统中是否存在该文档
+            try:
+                from web_app.simple_rag import get_simple_rag
+                simple_rag = get_simple_rag()
+                if doc_id in simple_rag._docs:
+                    # 从简化版RAG中删除文档
+                    result = simple_rag.delete_document(doc_id)
+                    return result
+                else:
+                    return False
+            except Exception as e:
+                print(f"Error deleting document from simple RAG: {e}")
+                return False
 
     def _rebuild_index(self):
         """从剩余 chunks 重建 FAISS 索引。"""
@@ -452,20 +522,103 @@ class KnowledgeBase:
         检索最相关的 chunk。
         返回 [(DocChunk, score), ...]，按 score 降序。
         """
+        # 如果 FAISS 不可用，使用简化版 RAG
         if not self._faiss or self._faiss.n_vectors == 0:
-            return []
+            try:
+                from web_app.simple_rag import get_simple_rag
+                simple_rag = get_simple_rag()
+                results = simple_rag.retrieve(query, top_k)
 
-        model = EmbeddingModel.get()
-        qvec  = model.encode([query])
-        hits  = self._faiss.search(qvec, top_k=top_k)
+                # TF-IDF 分数远低于向量余弦相似度，使用更宽松的阈值 0.05
+                tfidf_threshold = min(score_threshold, 0.05)
+                formatted_results = []
+                for text, score, metadata in results:
+                    if score >= tfidf_threshold:
+                        chunk = DocChunk(
+                            chunk_id=metadata.get("chunk_id", "virtual"),
+                            doc_id=metadata.get("doc_id", "virtual"),
+                            doc_name=metadata.get("doc_name", "Virtual Doc"),
+                            page=metadata.get("page", 0),
+                            text=text
+                        )
+                        formatted_results.append((chunk, score))
 
+                return formatted_results
+            except Exception:
+                # 如果简化版也失败了，返回空结果
+                return []
+
+        try:
+            model = EmbeddingModel.get()
+            qvec  = model.encode([query])
+            hits  = self._faiss.search(qvec, top_k=top_k)
+
+            results = []
+            for cid, score in hits:
+                if score < score_threshold:
+                    continue
+                if cid in self._chunks:
+                    results.append((self._chunks[cid], score))
+            return sorted(results, key=lambda x: x[1], reverse=True)
+        except RuntimeError:
+            # 如果嵌入模型不可用，使用简化版 RAG
+            try:
+                from web_app.simple_rag import get_simple_rag
+                simple_rag = get_simple_rag()
+                results = simple_rag.retrieve(query, top_k)
+
+                tfidf_threshold = min(score_threshold, 0.05)
+                formatted_results = []
+                for text, score, metadata in results:
+                    if score >= tfidf_threshold:
+                        chunk = DocChunk(
+                            chunk_id=metadata.get("chunk_id", "virtual"),
+                            doc_id=metadata.get("doc_id", "virtual"),
+                            doc_name=metadata.get("doc_name", "Virtual Doc"),
+                            page=metadata.get("page", 0),
+                            text=text
+                        )
+                        formatted_results.append((chunk, score))
+
+                return formatted_results
+            except Exception:
+                return []
+
+    def retrieve_relevant_docs(
+        self,
+        query: str,
+        top_k: int = 8,
+        score_threshold: float = 0.5,
+    ) -> List[dict]:
+        """
+        直接检索高度相关文献，返回结构化结果列表。
+
+        每条结果包含：
+          - doc_name: 文献文件名
+          - page:     页码（1-based）
+          - score:    相关度得分（0~1）
+          - text:     命中文本段落
+          - chunk_id: chunk 唯一 ID
+          - doc_id:   文档 ID
+
+        Parameters
+        ----------
+        query          : 检索查询
+        top_k          : 最多返回条数（超过阈值的才保留）
+        score_threshold: 相关度阈值，默认 0.5（仅返回高度相关结果）
+        """
+        hits = self.retrieve(query, top_k=top_k, score_threshold=score_threshold)
         results = []
-        for cid, score in hits:
-            if score < score_threshold:
-                continue
-            if cid in self._chunks:
-                results.append((self._chunks[cid], score))
-        return sorted(results, key=lambda x: x[1], reverse=True)
+        for chunk, score in hits:
+            results.append({
+                "doc_name":  chunk.doc_name,
+                "page":      chunk.page + 1,   # 转为 1-based
+                "score":     round(score, 4),
+                "text":      chunk.text,
+                "chunk_id":  chunk.chunk_id,
+                "doc_id":    chunk.doc_id,
+            })
+        return results
 
     def build_rag_context(
         self,
@@ -476,9 +629,24 @@ class KnowledgeBase:
         """
         检索 + 格式化为 LLM 系统提示可用的上下文段落。
         """
+        # 如果 FAISS 不可用，使用简化版 RAG
+        if not self._faiss or self._faiss.n_vectors == 0:
+            try:
+                from web_app.simple_rag import get_simple_rag
+                simple_rag = get_simple_rag()
+                return simple_rag.build_context(query, top_k, max_chars)
+            except Exception:
+                return ""
+
         hits = self.retrieve(query, top_k=top_k)
         if not hits:
-            return ""
+            try:
+                # 尝试使用简化版 RAG
+                from web_app.simple_rag import get_simple_rag
+                simple_rag = get_simple_rag()
+                return simple_rag.build_context(query, top_k, max_chars)
+            except Exception:
+                return ""
 
         lines = ["以下是从知识库中检索到的相关内容，请参考这些内容回答用户问题：\n"]
         total = 0
@@ -497,25 +665,74 @@ class KnowledgeBase:
     # ── 状态查询 ──────────────────────────────────────────────────────────────
 
     def list_docs(self) -> List[DocMeta]:
-        return sorted(self._docs.values(), key=lambda d: d.added_at, reverse=True)
+        # 获取常规文档
+        docs = {**self._docs}
+        
+        # 如果FAISS索引为空，尝试从简化版RAG获取文档
+        if not self._faiss or self._faiss.n_vectors == 0:
+            try:
+                from web_app.simple_rag import get_simple_rag
+                simple_rag = get_simple_rag()
+                # 将简化版文档合并进来
+                for doc_id, doc_meta in simple_rag._docs.items():
+                    if doc_id not in docs:
+                        docs[doc_id] = doc_meta
+            except Exception:
+                pass  # 如果简化版RAG不可用，只返回常规文档
+        
+        return sorted(docs.values(), key=lambda d: d.added_at, reverse=True)
 
     @property
     def n_docs(self) -> int:
-        return len(self._docs)
+        count = len(self._docs)
+        
+        # 如果FAISS索引为空，尝试从简化版RAG获取文档数
+        if not self._faiss or self._faiss.n_vectors == 0:
+            try:
+                from web_app.simple_rag import get_simple_rag
+                simple_rag = get_simple_rag()
+                count = max(count, len(simple_rag._docs))
+            except Exception:
+                pass
+        
+        return count
 
     @property
     def n_chunks(self) -> int:
-        return len(self._chunks)
+        count = len(self._chunks)
+        
+        # 如果FAISS索引为空，尝试从简化版RAG获取块数
+        if not self._faiss or self._faiss.n_vectors == 0:
+            try:
+                from web_app.simple_rag import get_simple_rag
+                simple_rag = get_simple_rag()
+                # 简化版RAG的块数可以通过其向量数据库获取
+                count = max(count, simple_rag.db.count_items())
+            except Exception:
+                pass
+        
+        return count
 
     @property
     def is_empty(self) -> bool:
         return self.n_chunks == 0
 
     def status(self) -> dict:
+        n_vectors = self._faiss.n_vectors if self._faiss else 0
+        
+        # 如果FAISS索引为空，尝试从简化版RAG获取向量数
+        if n_vectors == 0:
+            try:
+                from web_app.simple_rag import get_simple_rag
+                simple_rag = get_simple_rag()
+                n_vectors = simple_rag.db.count_items()
+            except Exception:
+                pass
+        
         return {
             "n_docs":   self.n_docs,
             "n_chunks": self.n_chunks,
-            "n_vectors": self._faiss.n_vectors if self._faiss else 0,
+            "n_vectors": n_vectors,
             "kb_dir":   str(KB_DIR),
         }
 

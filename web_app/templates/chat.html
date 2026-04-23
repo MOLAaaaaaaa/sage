@@ -577,7 +577,9 @@ async function sendCode(text) {
 
   // 3. 标准输出（只显示一次，去掉 [FIGURE] 行）
   const cleanOut = (d.stdout || '')
-    .split('\n').filter(l => !l.startsWith('[FIGURE]')).join('\n').trim();
+    .split('\n')
+    .filter(l => !l.startsWith('[FIGURE]') && !l.startsWith('[GMT_SCRIPT]'))
+    .join('\n').trim();
   if (cleanOut) {
     const pre = document.createElement('pre');
     pre.style.cssText = 'background:#f6f8fa;border:1px solid #e0e0e0;border-radius:8px;padding:.6rem .8rem;overflow-x:auto;font-size:.82em;margin:.3rem 0;white-space:pre-wrap;word-break:break-all;';

@@ -17,6 +17,7 @@ keywords: GMT, 地图, 震中分布, 台站分布, 断层, 地形, 震源机制,
 - `run_gmt(script, outname, title)` 已预注入，**直接调用，无需 import**
 - `script` 参数是**完整的 GMT6 bash 脚本字符串**（多行字符串）
 - 脚本中必须使用 `gmt begin <name> PNG` ... `gmt end` 结构（GMT6 modern mode）
+- **中文标题/标签直接写在脚本里**（如 `-BWSne+t"中国地形图"`），`run_gmt` 会自动处理 CJK 字符，无需转成英文
 - 执行后自动生成 **PNG 图像** 和 **.sh 脚本文件**，均可在界面下载
 - 需要系统安装 GMT >= 6.0
 

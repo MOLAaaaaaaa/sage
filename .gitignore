@@ -3,3 +3,4 @@
 *.pdf
 /results
 /pnsn
+data/seismic/waveform/data.csv

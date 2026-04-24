@@ -101,6 +101,56 @@ gmt colorbar -DJBC+w7c/0.35c+o0/0.5c -Ctopo.cpt -Baf+l"Elevation"
 
 **Returns:** str (PNG image path)
 
+**Good practice:**
+- If the script is built in a Python f-string, literal bash vars must use `${{VAR}}`.
+- In that case, awk expressions should use doubled braces like `awk '{{print $6}}'`.
+- If the user provides a `.csv` file path, do NOT pass it to `read_stream_from_dir`; use pandas to load tabular CSV data.
+
+---
+
+## Legend / 图例
+
+When the user requests a legend, the skill should generate a dedicated GMT legend block after plot layers and before or after the colorbar.
+
+- Use `gmt legend` rather than trying to force a legend through `gmt basemap`.
+- Place legend commands after all `gmt plot` / `gmt meca` layers so the legend is drawn on top.
+- Use `-Dj` to anchor placement and `-F` to draw a boxed background.
+- The legend symbol line must match the actual plot style exactly.
+
+### Recommended workflow for station points
+
+```bash
+gmt plot stations.txt -Sc0.25c -Gred -W0.5p,black
+cat > legend.txt << EOF
+S 0.25c c red 0.5p,black Seismic station
+EOF
+
+gmt legend legend.txt -DjBR+w4c+o0.3c -F+p0.8p,black+gwhite
+```
+
+### Equivalent inline legend definition
+
+```bash
+gmt plot stations.txt -Sc0.25c -Gred -W0.5p,black
+printf "S 0.25c c red 0.5p,black Seismic station\n" \
+  | gmt legend -DjBR+w4c+o0.3c -F+p0.8p,black+gwhite
+```
+
+### Why this matters
+
+- The legend entry must use the same symbol and colors as the plot line: if you plot with `-Sc0.25c -Gred -W0.5p,black`, the legend line should use `S 0.25c c red 0.5p,black`.
+- `-F+p...+g...` is important on top of terrain so the legend box remains readable.
+- The legend block should come after the data layer, not before.
+
+If the map also has a colorbar, put the legend either before or after the `gmt colorbar` command, but always after the main plotting commands.
+
+### Common legend mistakes
+
+- ❌ Placing `gmt legend` before `gmt grdimage` or before data layers
+- ❌ Using legend placement that overlaps the plotted points without a background box
+- ❌ Forgetting to specify `-F` when the legend should be visible on top of terrain
+- ❌ Using a legend symbol definition that does not match the plotted symbol style
+
 ---
 
 ## GMT Basemap Skill
@@ -409,6 +459,16 @@ projection=L100/25/20/30/12c    # Lambert Conic (better for latitude range)
 # Before "gmt end show", add:
 gmt plot stations.txt -Sc0.2c -Gblue -W0.3p,black
 gmt plot earthquakes.txt -Sc0.08c -Gred -W0.1p,darkred
+```
+
+**Color and legend example:**
+```bash
+gmt plot stations.txt -Sc0.25c -Gblue -W0.3p,black
+cat > legend.txt << EOF
+S 0.25c c blue 0.3p,black Seismic station
+EOF
+
+gmt legend legend.txt -DjTR+w4c/1.5c+o0.2c/0.2c -F+p0.8p,black+gwhite
 ```
 
 **Different color scheme:**

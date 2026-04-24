@@ -138,6 +138,9 @@ The execution environment pre-injects these functions — call directly, do NOT 
 - If the file has no header, use `header=None` and assign `names=[...]`.
 - If parsing fails, inspect the first few lines with `open(path).read().splitlines()[:20]`.
 - Always print `df.columns.tolist()` and `df.head(3)` when you first read a table.
+- When using pandas, always include `import pandas as pd` at the top of the script.
+- `read_stream_from_dir(path)` is only for waveform directories or collections, not a `.csv` tabular file.
+- If the requested path ends with `.csv`, prefer pandas and do NOT pass the file directly into `read_stream_from_dir`.
 
 ## ⚠️ CRITICAL — CSV column names
 When a [FILE CONTEXT] block is provided, it shows the EXACT column names.
@@ -226,6 +229,7 @@ Rules:
 2. Write data files in Python FIRST with `np.savetxt()`, then reference the path in script
 3. Use f-string with single-triple-quotes; Python vars: `{R}`, bash vars: `${{Z_MIN}}`, awk: `{{print $6}}`
 4. Skip @earth_relief_01m (timeout) — chain 02m→05m
+5. Use `-G<color>` for marker fill and `gmt legend` to create a legend block after plot layers
 
 ```python
 import numpy as np, os
@@ -627,6 +631,11 @@ def _pre_sanitize(code: str) -> str:
     # (MPLBACKEND env is already set, but belt-and-braces for any import order issue)
     if 'cartopy' in code and 'matplotlib.use' not in code:
         code = "import matplotlib; matplotlib.use('Agg')\n" + code
+
+    # Auto-add pandas import if generated code uses pd but forgot the import.
+    if 'pd.' in code and 'import pandas as pd' not in code:
+        code = "import pandas as pd\n" + code
+
     # Remove re-imports of the pre-injected toolkit (causes ImportError)
     code = re.sub(
         r"^\s*from\s+seismo_code\.toolkit\s+import\s+.*$",
@@ -660,6 +669,12 @@ def _pre_sanitize(code: str) -> str:
         )
         # inject the hint at the top of the script so it fails immediately
         code = hint + "\n" + code
+
+    # Fix common GMT f-string escaping mistakes inside generated scripts.
+    if 'gmt' in code and re.search(r"f(['\"]{3})", code):
+        code = re.sub(r"awk\s+(['\"])\{print\s+([^}]+)\}(['\"])",
+                      r"awk \1{{print \2}}\3", code)
+        code = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", r"${{\1}}", code)
 
     # Detect incorrect sage import (toolkit is pre-injected)
     if re.search(r'from\s+sage\s+import|import\s+sage\b', code):

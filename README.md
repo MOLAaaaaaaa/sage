@@ -902,7 +902,7 @@ If none of the above methods can solve, the project's built-in lightweight TF-ID
 ---
 
 ## Contact
-
+SeismicX is developed by:
 - **Yuqi Cai** - caiyuqiming@foxmail.com
 - **Xin Liu** - xinliu_geo@outlook.com
 - **Ziye Yu** - yuziye@cea-igp.ac.cn

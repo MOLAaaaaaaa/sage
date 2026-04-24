@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Framework-Flask-lightgrey" alt="Flask"/>
   <img src="https://img.shields.io/badge/LLM-Ollama%20%7C%20OpenAI%20Compatible-green" alt="LLM"/>
   <img src="https://img.shields.io/badge/RAG-BGE--M3%20%2B%20FAISS-orange" alt="RAG"/>
-  <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License"/>
+  <img src="https://img.shields.io/badge/License-GPLv3-blue" alt="License"/>
 </p>
 
 ---
